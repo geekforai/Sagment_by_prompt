@@ -20,7 +20,7 @@ if torch.cuda.get_device_properties(0).major >= 8:
 
 
 FLORENCE_MODEL, FLORENCE_PROCESSOR = load_florence_model(device=DEVICE)
-SAM_IMAGE_MODEL = load_sam_image_model(device=DEVICE)
+# SAM_IMAGE_MODEL = load_sam_image_model(device=DEVICE)
 
 
 @torch.inference_mode()
