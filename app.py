@@ -80,6 +80,55 @@ def process_image_endpoint():
     os.remove(image_path)
 
     return jsonify({'message': 'Image processing completed', 'results': results}), 200
+import os
+import cv2
+import numpy as np
+from PIL import Image
+from flask import Flask, request, send_file
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UniPCMultistepScheduler
+import torch
 
+
+
+# Load ControlNet model and pipeline
+controlnet = ControlNetModel.from_pretrained(
+    "lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16
+)
+
+pipe = StableDiffusionControlNetPipeline.from_pretrained(
+    "ashllay/stable-diffusion-v1-5-archive", controlnet=controlnet, safety_checker=None, torch_dtype=torch.float16
+)
+
+pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+pipe.enable_xformers_memory_efficient_attention()
+pipe.enable_model_cpu_offload()
+@app.route('/generate', methods=['POST'])
+def generate_image():
+    # Check if an image file was uploaded
+    if 'image' not in request.files:
+        return "No image file uploaded", 400
+    
+    # Get the uploaded image file
+    file = request.files['image']
+    prompt = request.form.get('prompt', 'a bird')  # Default prompt
+
+    # Process the image
+    image = Image.open(file).convert("RGB")
+    image = np.array(image)
+
+    # Apply Canny edge detection
+    low_threshold = 100
+    high_threshold = 200
+    edges = cv2.Canny(image, low_threshold, high_threshold)
+    edges = edges[:, :, None]
+    edges = np.concatenate([edges, edges, edges], axis=2)
+    edges_image = Image.fromarray(edges)
+
+    # Generate image using the model
+    generated_image = pipe(prompt, edges_image, num_inference_steps=20).images[0]
+
+    # Save generated image
+    output_path = 'generated_image.png'
+    generated_image.save(output_path)
 if __name__ == '__main__':
     app.run(debug=True)
