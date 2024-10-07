@@ -35,7 +35,7 @@ pipe.enable_model_cpu_offload()
 
 # Load the inpainting pipeline
 inpainting_pipeline = AutoPipelineForInpainting.from_pretrained(
-    "kandinsky-community/kandinsky-2-2-decoder-inpaint", torch_dtype=torch.float16
+    "ashllay/stable-diffusion-v1-5-archive", torch_dtype=torch.float16
 )
 inpainting_pipeline.enable_model_cpu_offload()
 
