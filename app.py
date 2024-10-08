@@ -18,50 +18,63 @@ from PIL import Image
 import torch
 from typing import Optional
 import image_utils
-
+from model import Model
 # Initialize Flask app
 app = Flask(__name__)
-
+model = Model(base_model_id="ashllay/stable-diffusion-v1-5-archive")
 # Device configuration
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 FLORENCE_MODEL, FLORENCE_PROCESSOR = load_florence_model(device=DEVICE)
 # Load models
-controlnet = ControlNetModel.from_pretrained(
-    "diffusers/controlnet-canny-sdxl-1.0",
-    torch_dtype=torch.float16,
-    use_safetensors=True
-)
-vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16, use_safetensors=True)
-pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    controlnet=controlnet,
-    vae=vae,
-    torch_dtype=torch.float16,
-    use_safetensors=True
-)
-pipe.enable_model_cpu_offload()
 # Utility functions
+#controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
+#pipe = StableDiffusionControlNetPipeline.from_pretrained(
+ #   "ashllay/stable-diffusion-v1-5-archive", 
+  #  controlnet=controlnet, 
+   # safety_checker=None, 
+   # torch_dtype=torch.float16
+#)
+#pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+#pipe.enable_model_cpu_offload()
 def clear_cuda_cache():
     """Clear CUDA cache to free up memory."""
     gc.collect()
     torch.cuda.empty_cache()
+import subprocess
 
 def force_kill_process_by_name(process_name):
     """Forcefully kill all processes with the given name."""
     try:
+        # Find the PIDs of the processes
         result = subprocess.run(
-            ['pkill', '-9', process_name],
+            ['pgrep', process_name],
             capture_output=True,
             text=True
         )
-        if result.returncode == 0:
-            return f"Forcefully killed all instances of '{process_name}'."
-        else:
-            return f"Error: {result.stderr.strip() or 'No matching processes found.'}"
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
 
-def resize_image(image, max_size_kb=1000):
+        if result.returncode != 0:
+            print(f"No matching processes found for '{process_name}'.")
+            return
+
+        # Get the list of PIDs
+        pids = result.stdout.strip().split('\n')
+
+        if not pids:
+            print(f"No matching processes found for '{process_name}'.")
+            return
+
+        # Kill each process
+        for pid in pids:
+            subprocess.run(['sudo', 'kill', '-9', pid])
+
+        print(f"Forcefully killed all instances of '{process_name}'.")
+    
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
+
+def resize_image(image, max_size_kb=300):
+    clear_cuda_cache()
     """Resize image to ensure it is under the specified size."""
     img_bytes = io.BytesIO()
     image.save(img_bytes, format='JPEG')
@@ -77,24 +90,28 @@ def resize_image(image, max_size_kb=1000):
 # API endpoints
 @app.route('/generate-prompt', methods=['POST'])
 def generate_prompt():
+    clear_cuda_cache()
     data = request.json
     prompt = data.get('prompt', '')
-    
+   
     if not prompt:
         return jsonify({'error': 'Prompt is required'}), 400
     
-    prompt = f"Generate a prompt to create an image using this info: {prompt}. Generate only the prompt because it will be directly passed to the image generation model and should be 60 words only."
+    prompt = f"write a prompt to generate  {prompt}.  it should contain 100 word only and write only the prompt"
 
     try:
         response = ollama.chat(model='llama3.1', messages=[{'role': 'user', 'content': prompt}])
         title = response['message']['content']
         force_kill_process_by_name('ollama_llama_se')
+        force_kill_process_by_name('ollama_llama_se')
+        print(title)
         return jsonify({'title': title})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/generate-title', methods=['POST'])
 def generate_title():
+    clear_cuda_cache()
     data = request.json
     prompt = data.get('prompt', '')
 
@@ -114,7 +131,7 @@ def generate_title():
     try:
         response = ollama.chat(model='llama3.1', messages=[{'role': 'user', 'content': prompt}])
         title = response['message']['content']
-        force_kill_process_by_name('ollama_llama_se')
+        #force_kill_process_by_name('ollama_llama_se')
         return jsonify({'title': title})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -122,7 +139,7 @@ def generate_title():
 @app.route('/process_image', methods=['POST'])
 def process_image_endpoint():
     clear_cuda_cache()
-    
+ 
     if 'image' not in request.files or 'text_input' not in request.form:
         return jsonify({'error': 'Image and text_input are required'}), 400
 
@@ -137,7 +154,7 @@ def process_image_endpoint():
         results.append({'text_input': text, 'result': result})
 
     os.remove(image_path)
-    force_kill_process_by_name('ollama_llama_se')
+    #force_kill_process_by_name('ollama_llama_server')
     return jsonify({'message': 'Image processing completed', 'results': results}), 200
 
 def process_image(image_path, text_input) -> Optional[dict]:
@@ -153,10 +170,10 @@ def process_image(image_path, text_input) -> Optional[dict]:
         task=FLORENCE_OPEN_VOCABULARY_DETECTION_TASK,
         text=text_input
     )
-    force_kill_process_by_name('ollama_llama_se')
+    #force_kill_process_by_name('ollama_llama_se')
     print('Detected bounding boxes:', result['<OPEN_VOCABULARY_DETECTION>'])
     return result['<OPEN_VOCABULARY_DETECTION>']
-
+import random
 @app.route('/generate', methods=['POST'])
 def generate_image():
     clear_cuda_cache()
@@ -166,22 +183,55 @@ def generate_image():
 
     file = request.files['image']
     prompt = request.form.get('prompt', 'a bird')
-    prompt = 'Generate a high-resolution image ' + prompt
+    prompt = 'Generate a high-resolution image ' + prompt + ' and background not be blank, fill it with related textures ' 
 
     image = Image.open(file).convert("RGB")
     image = resize_image(image, 50)
     image = np.array(image)
     edges = cv2.Canny(image, 100, 200)
     edges_image = Image.fromarray(np.concatenate([edges[:, :, None]] * 3, axis=2))
-    
-    generated_image = pipe(
-    prompt,
-    negative_prompt='"Avoid any human figures, bright colors, text, logos, and complex patterns. Exclude any recognizable objects or symbols, and ensure the background is simple and unobtrusive.""Avoid any human figures, bright colors, text, logos, and complex patterns. Exclude any recognizable objects or symbols, and ensure the background is simple and unobtrusive."',
-    image=edges_image,
-    controlnet_conditioning_scale=0.5,
-).images[0]
+    seed=random.choice(range(0,2147483647))
+    print(seed)
 
-    force_kill_process_by_name('ollama_llama_se')
+
+
+    #prompt = "A beautiful landscape"
+    additional_prompt = "best quality, extremely detailed"
+    negative_prompt = "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
+    num_images = 1
+    image_resolution = 768  # Ensure this is within MAX_IMAGE_RESOLUTION
+    num_steps = 20
+    guidance_scale = 9
+    low_threshold = 100  # Canny edge detection parameters
+    high_threshold = 200
+
+
+    #generated_image = pipe(
+     #   prompt,
+     #   edges_image,
+     #   negative_prompt="blurry, disfigured,longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality,  low quality,bad human body parts",
+     #   num_inference_steps=30,
+     #   additional_prompt='best quality, extremely detailed',
+     #   guidance_scale=9,
+     #   height=768,
+     #   width=768,
+     #   generator=torch.manual_seed(2147483647)
+    #).images[0]
+    generated_image = model.process_canny(
+        image=image_array,
+        prompt=prompt,
+        additional_prompt=additional_prompt,
+        negative_prompt=negative_prompt,
+        num_images=num_images,
+        image_resolution=image_resolution,
+        num_steps=num_steps,
+        guidance_scale=guidance_scale,
+        seed=seed,
+        low_threshold=low_threshold,
+        high_threshold=high_threshold,
+    )
+
+    #force_kill_process_by_name('ollama_llama_se')
 
     generated_image_path = 'generated_image.png'
     generated_image.save(generated_image_path)
@@ -189,6 +239,7 @@ def generate_image():
     return send_file(generated_image_path, mimetype='image/png', as_attachment=True, download_name='generated_image.png')
 @app.route('/paste_image', methods=['POST'])
 def paste_image():
+    clear_cuda_cache()
     # Retrieve the images from the request files
     base_image_file = request.files['base_image']
     paste_image_file = request.files['paste_image']
@@ -209,11 +260,12 @@ def paste_image():
     img_io = io.BytesIO()
     result_image.save(img_io, 'PNG')
     img_io.seek(0)
-    force_kill_process_by_name('ollama_llama_se')
+    #force_kill_process_by_name('ollama_llama_se')
     # Send the resulting image back
     return send_file(img_io, mimetype='image/png')
 @app.route('/inpaint', methods=['POST'])
 def inpaint():
+    clear_cuda_cache()
     # Retrieve the image from the request files
     image_file = request.files['image']
     
@@ -230,7 +282,7 @@ def inpaint():
     result_image = image_utils.inpaint_with_bboxes(pil_image, bounding_boxes, inpaint_radius)
     
     # Save the result image to a BytesIO object 
-    force_kill_process_by_name('ollama_llama_se')
+    #force_kill_process_by_name('ollama_llama_se')
     img_io = io.BytesIO()
     result_image.save(img_io, 'PNG')
     img_io.seek(0)
@@ -239,6 +291,7 @@ def inpaint():
     return send_file(img_io, mimetype='image/png')
 @app.route('/remove_text', methods=['POST'])
 def remove_text():
+    clear_cuda_cache()
     # Retrieve the image from the request files
     image_file = request.files['image']
     
@@ -254,11 +307,12 @@ def remove_text():
     img_io.seek(0)
     
     # Send the resulting image back
-    force_kill_process_by_name('ollama_llama_se')
+    #force_kill_process_by_name('ollama_llama_se')
     return send_file(img_io, mimetype='image/png' )
 
 @app.route('/draw_text', methods=['POST'])
 def draw_text():
+    clear_cuda_cache()
     # Retrieve the image from the request files
     image_file = request.files['image']
     
